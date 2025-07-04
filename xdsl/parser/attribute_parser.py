@@ -213,13 +213,20 @@ class AttrParser(BaseParser):
         attrs = self.parse_optional_comma_separated_list(
             self.Delimiter.BRACES, self._parse_attribute_entry
         )
+
         if attrs is None:
             return dict()
+        
+        attrs_dict:dict[str, Attribute] = dict()
+        for name, value in attrs:
+            if name not in attrs_dict:
+                attrs_dict[name] = value 
+            else:
+                self.raise_error(f"Duplicate attribut name {name} with value {value} first defined value {attrs_dict[name]}", self._current_token.span)
 
-        if (key := self._find_duplicated_key(attrs)) is not None:
-            self.raise_error(f"Duplicate key '{key}' in dictionary attribute")
 
         return dict(attrs)
+
 
     def _parse_dialect_type_or_attribute_body(
         self,
