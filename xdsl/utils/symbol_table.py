@@ -47,7 +47,7 @@ class SymbolUse(NamedTuple):
     """The symbol reference that this use represents."""
 
 
-def get_name_if_symbole(op: Operation):
+def get_name_if_symbol(op: Operation):
     sym_interface = op.get_trait(traits.SymbolOpInterface)
     if sym_interface is None:
         return None
@@ -111,7 +111,7 @@ class SymbolTable:
 
     def remove(self, op: Operation) -> None:
         """Remove the given symbol from the table, without deleting it."""
-        name = get_name_if_symbole(op)
+        name = get_name_if_symbol(op)
 
         if name is None:
             raise Exception("Expected valid 'name' attribute")
@@ -146,6 +146,32 @@ class SymbolTable:
         name and updates the symbol table and all usages of the symbol accordingly.
         Fails if the updating of the usages fails.
         """
+
+        # if isinstance(from_op, Operation):
+        #     str_op_name = get_name_if_symbol(from_op)
+        #     if str_op_name is None:
+        #         raise Exception("Expected valid 'name' attribute")
+
+        #     if from_op.parent != self._symbol_table_op:
+        #         raise Exception(
+        #             "Expected this operation to be inside of the operation with this SymbolTable"
+        #         )
+
+        #     if self.lookup(str_op_name) == from_op:
+        #         raise Exception("Current name does not resolve to op")
+
+        #     if self.lookup(to_name) is not None:
+        #         raise Exception("New name already exists")
+
+        #     op_name = StringAttr(str_op_name)
+        # else:
+        #     op_name = from_op
+
+        # if isinstance(to_name, str):
+        #     to_name = StringAttr(to_name)
+
+        # SymbolTable.replace_all_symbol_uses(op_name, to_name, aaaaaaaaaaaaaaaaaaaaaaa)
+
         # TODO: update doc string once failure mechanism is implemented
         raise NotImplementedError
 
@@ -158,9 +184,25 @@ class SymbolTable:
         updates the symbol table and all usages of the symbol accordingly.
         Returns the new name or `None` if the renaming fails.
         """
-        raise NotImplementedError
+        if isinstance(from_op, Operation):
+            str_op_name = get_name_if_symbol(from_op)
+            if str_op_name is None:
+                raise Exception("Expected valide 'name' attribute")
 
-    # Symbol Utilities
+            op_name = StringAttr(str_op_name)
+        else:
+            op_name = from_op
+
+        unique_id = 0
+        prefix = op_name.name + "_"
+        new_name = StringAttr(prefix + str(unique_id))
+        while any(st.lookup(new_name) for st in others):
+            unique_id += 1
+            new_name = StringAttr(prefix + str(unique_id))
+
+        self.rename(from_op, new_name)
+
+        return new_name
 
     @staticmethod
     def get_symbol_name(symbol: Operation) -> StringAttr | None:
@@ -168,7 +210,13 @@ class SymbolTable:
         Returns the name of the given symbol operation, or `None` if no symbol is
         present.
         """
-        raise NotImplementedError
+
+        name = get_name_if_symbol(symbol)
+
+        if isinstance(name, str):
+            return StringAttr(name)
+
+        return None
 
     @staticmethod
     def set_symbol_name(symbol: Operation, name: StringAttr | str) -> None:
@@ -176,14 +224,27 @@ class SymbolTable:
         raise NotImplementedError
 
     @staticmethod
+    def get_visibility_attr_name() -> str:
+        return "sym_visibility"
+
+    @staticmethod
     def get_symbol_visibility(symbol: Operation) -> Visibility:
         """Returns the visibility of the given symbol operation."""
-        raise NotImplementedError
+        vis = symbol.get_attr_or_prop(SymbolTable.get_visibility_attr_name())
+
+        if vis is None:
+            return Visibility.PUBLIC
+
+        match vis:
+            case Visibility.PUBLIC | Visibility.PRIVATE | Visibility.NESTED as e:
+                return e
+            case _:
+                raise Exception(f"unknown symbol visibility kind {symbol}")
 
     @staticmethod
     def set_symbol_visibility(symbol: Operation, vis: Visibility) -> None:
         """Sets the visibility of the given symbol operation."""
-        raise NotImplementedError
+        symbol.attributes[SymbolTable.get_visibility_attr_name()] = StringAttr(vis)
 
     @staticmethod
     def get_nearest_symbol_table(from_op: Operation) -> Operation | None:
@@ -293,6 +354,7 @@ class SymbolTable:
         If there are any unknown operations that may potentially be symbol tables, no
         uses are replaced and `False` is returned.
         """
+
         raise NotImplementedError
 
 
