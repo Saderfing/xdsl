@@ -13,6 +13,8 @@ The Python dialect is under heavy development, and the definitions are not yet s
 from collections.abc import Sequence
 from typing import cast
 
+from bytecode import BinaryOp, Bytecode, Instr
+
 from xdsl.dialects.builtin import (
     ArrayAttr,
     BoolAttr,
@@ -95,7 +97,8 @@ class PyObjectType(ParametrizedAttribute, TypeAttribute):
 
 
 class PyOperation(IRDLOperation):
-    pass
+    def bytecode(self):
+        return []
 
 
 @irdl_op_definition
@@ -201,6 +204,9 @@ class PyConstOp(PyOperation):
                 printer.print_string(repr(value))
         printer.print_op_attributes(self.attributes)
 
+    def bytecode(self):
+        return [Instr("LOAD_CONST", self.value)]
+
 
 class Operator(StrEnum):
     """
@@ -227,6 +233,33 @@ class OperatorAttr(EnumAttribute[Operator], SpacedOpaqueSyntaxAttribute):
     name = "py.operator"
 
 
+def gen_binop_operand(ope: Operand):
+    owner = ope.owner
+    if isinstance(owner, PyConstOp):
+        return owner.bytecode()
+    elif owner.name_hint:
+        return [Instr("LOAD_FAST", owner.name_hint)]
+    else:
+        raise NotImplementedError("")
+
+
+BinaryOp_Mapping = {
+    Operator.ADD: BinaryOp.ADD,
+    Operator.SUB: BinaryOp.SUBTRACT,
+    Operator.MULT: BinaryOp.MULTIPLY,
+    Operator.MAT_MULT: BinaryOp.MATRIX_MULTIPLY,
+    Operator.DIV: BinaryOp.TRUE_DIVIDE,
+    Operator.MOD: BinaryOp.REMAINDER,
+    Operator.POW: BinaryOp.POWER,
+    Operator.L_SHIFT: BinaryOp.LSHIFT,
+    Operator.R_SHIFT: BinaryOp.RSHIFT,
+    Operator.BIT_OR: BinaryOp.OR,
+    Operator.BIT_XOR: BinaryOp.XOR,
+    Operator.BIT_AND: BinaryOp.AND,
+    Operator.FLOOR_DIV: BinaryOp.FLOOR_DIVIDE,
+}
+
+
 @irdl_op_definition
 class PyBinOp(PyOperation):
     """
@@ -246,6 +279,16 @@ class PyBinOp(PyOperation):
             properties={"op": OperatorAttr.get(op)},
             result_types=[PyObjectType()],
         )
+
+    def bytecode(self) -> list[Instr]:
+        gen_lhs = gen_binop_operand(self.lhs)
+        gen_rhs = gen_binop_operand(self.rhs)
+
+        return [
+            *gen_lhs,
+            *gen_rhs,
+            Instr("BINARY_OP", BinaryOp_Mapping[self.op.data.value]),
+        ]
 
 
 @irdl_op_definition
@@ -436,6 +479,28 @@ class PyFuncOp(PyOperation):
             raise VerifyException(
                 "Expected the block arguments to match the function type inputs"
             )
+
+    def bytecode(self):
+
+        bc = []
+        for op in self.body.walk():
+            if isinstance(op, PyOperation):
+                bc += op.bytecode()
+
+        print(bc)
+        body = Bytecode([Instr("RESUME", 0), *bc, Instr("RETURN_VALUE")])
+
+        func = Bytecode(
+            [
+                Instr("RESUME", 0),
+                Instr("LOAD_CONST", body.to_code()),
+                Instr("MAKE_FUNCTION", 0),
+                Instr("STORE_NAME", self.func_name.data),
+                Instr("RETURN_CONST", None),
+            ]
+        )
+
+        return func.to_code()
 
 
 @irdl_op_definition
