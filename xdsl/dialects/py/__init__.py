@@ -10,7 +10,9 @@ The Python dialect is under heavy development, and the definitions are not yet s
         1. We assume no exceptions are raised in the code.
 """
 
-from collections.abc import Iterator, Sequence
+from __future__ import annotations
+
+from collections.abc import Sequence
 from typing import cast
 
 from bytecode import (
@@ -101,7 +103,7 @@ class PyObjectType(ParametrizedAttribute, TypeAttribute):
 
 
 class PyOperation(IRDLOperation):
-    def bytecode(self):
+    def bytecode(self) -> list[Instr]:
         return []
 
 
@@ -153,7 +155,7 @@ class PyConstOp(PyOperation):
         super().__init__(properties={"const": const}, result_types=[PyObjectType()])
 
     @staticmethod
-    def from_value(value: int | bool | float | str | None) -> "PyConstOp":
+    def from_value(value: int | bool | float | str | None) -> PyConstOp:
         """Build the constant for a Python literal."""
         match value:
             case None:
@@ -182,7 +184,7 @@ class PyConstOp(PyOperation):
         return bool(const.value.data)
 
     @classmethod
-    def parse(cls, parser: Parser) -> "PyConstOp":
+    def parse(cls, parser: Parser) -> PyConstOp:
         if (string := parser.parse_optional_str_literal()) is not None:
             op = cls.from_value(string)
         elif (boolean := parser.parse_optional_boolean()) is not None:
@@ -208,8 +210,8 @@ class PyConstOp(PyOperation):
                 printer.print_string(repr(value))
         printer.print_op_attributes(self.attributes)
 
-    def bytecode(self) -> Instr:
-        return Instr("LOAD_CONST", self.value)
+    def bytecode(self) -> list[Instr]:
+        return [Instr("LOAD_CONST", self.value)]
 
 
 class Operator(StrEnum):
@@ -237,10 +239,10 @@ class OperatorAttr(EnumAttribute[Operator], SpacedOpaqueSyntaxAttribute):
     name = "py.operator"
 
 
-def gen_binop_operand(ope: Operand) -> Iterator[Instr]:
+def gen_binop_operand(ope: Operand) -> list[Instr]:
     owner = ope.owner
     if isinstance(owner, PyConstOp):
-        return [owner.bytecode()]
+        return owner.bytecode()
     elif owner.name_hint:
         return [Instr("LOAD_FAST", owner.name_hint)]
     else:
@@ -284,13 +286,15 @@ class PyBinOp(PyOperation):
             result_types=[PyObjectType()],
         )
 
-    def bytecode(self) -> Iterator[Instr]:
-        gen_lhs = gen_binop_operand(self.lhs)
-        gen_rhs = gen_binop_operand(self.rhs)
+    def bytecode(self) -> list[Instr]:
+        lhs_instrs = gen_binop_operand(self.lhs)
+        rhs_instrs = gen_binop_operand(self.rhs)
 
-        yield from gen_lhs
-        yield from gen_rhs
-        return Instr("BINARY_OP", BinaryOp_Mapping[self.op.data.value])
+        return [
+            *lhs_instrs,
+            *rhs_instrs,
+            Instr("BINARY_OP", BinaryOp_Mapping[self.op.data.value]),
+        ]
 
 
 @irdl_op_definition
@@ -444,7 +448,7 @@ class PyFuncOp(PyOperation):
         )
 
     @classmethod
-    def parse(cls, parser: Parser) -> "PyFuncOp":
+    def parse(cls, parser: Parser) -> PyFuncOp:
         pos = parser.pos
         name, inputs, outputs, body, extra_attrs, arg_attrs, res_attrs = (
             parse_func_op_like(
@@ -482,27 +486,23 @@ class PyFuncOp(PyOperation):
                 "Expected the block arguments to match the function type inputs"
             )
 
-    def bytecode(self):
-
-        bc = []
+    def bytecode(self) -> list[Instr]:
+        bc: list[Instr] = []
         for op in self.body.walk():
+            print(op)
             if isinstance(op, PyOperation):
-                bc += op.bytecode()
+                bc.extend(op.bytecode())
 
-        print(bc)
-        body = Bytecode([Instr("RESUME", 0), *bc, Instr("RETURN_VALUE")])
+        body = Bytecode([Instr("RESUME", 0), *bc])
+        print(body)
 
-        func = Bytecode(
-            [
-                Instr("RESUME", 0),
-                Instr("LOAD_CONST", body.to_code()),
-                Instr("MAKE_FUNCTION", 0),
-                Instr("STORE_NAME", self.func_name.data),
-                Instr("RETURN_CONST", None),
-            ]
-        )
-
-        return func.to_code()
+        return [
+            Instr("RESUME", 0),
+            Instr("LOAD_CONST", body.to_code()),
+            Instr("MAKE_FUNCTION", 0),
+            Instr("STORE_NAME", self.func_name.data),
+            Instr("RETURN_CONST", None),
+        ]
 
 
 @irdl_op_definition
@@ -531,6 +531,14 @@ class PyReturnOp(PyOperation):
                 "Expected the returned value to have the function's result type "
                 f"{outputs[0]}, got {self.value.type}"
             )
+
+    def bytecode(self) -> list[Instr]:
+        if isinstance(self.value.owner, PyConstOp):
+            yield Instr("RETURN_VALUE")
+        elif self.value.name_hint:
+            return [Instr("LOAD_FAST", self.value.name_hint), Instr("RETURN_VALUE")]
+        else:
+            raise NotImplementedError("Return bytecode generation not implemented")
 
 
 Py = Dialect(
