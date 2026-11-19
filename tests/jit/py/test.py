@@ -1,3 +1,5 @@
+import dis
+
 from bytecode import Bytecode
 
 from xdsl.dialects.builtin import (
@@ -14,7 +16,13 @@ from xdsl.ir import (
     Region,
 )
 
+
+def foo():
+    return 1
+
+
 if __name__ == "__main__":
+    dis.dis(foo)
     const = PyConstOp.from_value(1)
     py_prg = PyFuncOp(
         "foo",
@@ -23,6 +31,8 @@ if __name__ == "__main__":
     )
     print(py_prg)
 
-    prg = py_prg.bytecode()
+    prg = [instr for instr in py_prg.bytecode()]
+    print(prg)
 
+    dis.dis(Bytecode(prg).to_code())
     print(eval(Bytecode(prg).to_code()))

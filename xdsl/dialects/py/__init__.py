@@ -12,7 +12,7 @@ The Python dialect is under heavy development, and the definitions are not yet s
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import cast
 
 from bytecode import (
@@ -210,8 +210,8 @@ class PyConstOp(PyOperation):
                 printer.print_string(repr(value))
         printer.print_op_attributes(self.attributes)
 
-    def bytecode(self) -> list[Instr]:
-        return [Instr("LOAD_CONST", self.value)]
+    def bytecode(self) -> Iterator[Instr]:
+        yield Instr("LOAD_CONST", self.value)
 
 
 class Operator(StrEnum):
@@ -239,12 +239,12 @@ class OperatorAttr(EnumAttribute[Operator], SpacedOpaqueSyntaxAttribute):
     name = "py.operator"
 
 
-def gen_binop_operand(ope: Operand) -> list[Instr]:
+def gen_binop_operand(ope: Operand) -> Iterator[Instr]:
     owner = ope.owner
     if isinstance(owner, PyConstOp):
-        return owner.bytecode()
+        yield from owner.bytecode()
     elif owner.name_hint:
-        return [Instr("LOAD_FAST", owner.name_hint)]
+        yield Instr("LOAD_FAST", owner.name_hint)
     else:
         raise NotImplementedError("")
 
@@ -286,15 +286,10 @@ class PyBinOp(PyOperation):
             result_types=[PyObjectType()],
         )
 
-    def bytecode(self) -> list[Instr]:
-        lhs_instrs = gen_binop_operand(self.lhs)
-        rhs_instrs = gen_binop_operand(self.rhs)
-
-        return [
-            *lhs_instrs,
-            *rhs_instrs,
-            Instr("BINARY_OP", BinaryOp_Mapping[self.op.data.value]),
-        ]
+    def bytecode(self) -> Iterator[Instr]:
+        yield from gen_binop_operand(self.lhs)
+        yield from gen_binop_operand(self.rhs)
+        yield Instr("BINARY_OP", BinaryOp_Mapping[self.op.data.value])
 
 
 @irdl_op_definition
@@ -486,23 +481,23 @@ class PyFuncOp(PyOperation):
                 "Expected the block arguments to match the function type inputs"
             )
 
-    def bytecode(self) -> list[Instr]:
+    def bytecode(self) -> Iterator[Instr]:
+        yield Instr("RESUME", 0)
+
         bc: list[Instr] = []
         for op in self.body.walk():
-            print(op)
             if isinstance(op, PyOperation):
                 bc.extend(op.bytecode())
 
-        body = Bytecode([Instr("RESUME", 0), *bc])
-        print(body)
+        body = Bytecode(bc)
 
-        return [
-            Instr("RESUME", 0),
-            Instr("LOAD_CONST", body.to_code()),
-            Instr("MAKE_FUNCTION", 0),
-            Instr("STORE_NAME", self.func_name.data),
-            Instr("RETURN_CONST", None),
-        ]
+        yield Instr("LOAD_CONST", body.to_code())
+        yield Instr("MAKE_FUNCTION", 0)
+        yield Instr("STORE_NAME", self.func_name.data)
+        yield Instr("PUSH_NULL")
+        yield Instr("LOAD_NAME", self.func_name.data)
+        yield Instr("CALL", 0)
+        yield Instr("RETURN_VALUE")
 
 
 @irdl_op_definition
